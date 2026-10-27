@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Search, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, Search, Sparkles } from 'lucide-react';
 import { fetchProducts } from '../lib/api';
 import type { Product } from '../lib/types';
 import ProductCard from '../components/ProductCard';
@@ -9,4 +9,68 @@ import Loading from '../components/Loading';
 import { useCart } from '../context/CartContext';
 
 const heroImage = 'https://images.pexels.com/photos/15290973/pexels-photo-15290973.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
-export default function Home({ onCartOpen }: { onCartOpen: () => void }) { const [products, setProducts] = useState<Product[]>([]); const [loading, setLoading] = useState(true); const [query, setQuery] = useState(''); const navigate = useNavigate(); const { addItem } = useCart(); useEffect(() => { fetchProducts().then(setProducts).catch(() => setProducts([])).finally(() => setLoading(false)); }, []); const featured = products.filter(p => p.featured).slice(0, 4); const add = (product: Product) => { addItem(product, product.sizes?.[0] ?? 'Standard', 1, '', ''); onCartOpen(); }; return <><section className="hero"><div className="hero-copy"><span className="eyebrow"><Sparkles size={14} /> Handmade, with heart</span><h1>Flowers that feel like <em>you.</em></h1><p>Thoughtfully made blooms, everlasting arrangements, and beautiful little details for the moments you want to keep close.</p><div className="hero-actions"><Link to="/shop" className="button button-dark">Shop handmade flowers <ArrowRight size={17} /></Link><Link to="/custom-orders" className="button button-ghost">Tell us your idea</Link></div><div className="hero-note"><span className="avatar-stack"><i>✿</i><i>♡</i><i>✦</i></span><span>Loved by flower people<br /><b>near and far</b></span></div></div><div className="hero-photo"><img src={heroImage} alt="A hand-tied bouquet of pink and purple flowers" /><div className="photo-caption"><span>01</span><p>Made for your<br /><strong>most meaningful moments.</strong></p></div></div></section><section className="find-section"><div><span className="eyebrow">Your kind of lovely</span><h2>Find flowers for the feeling.</h2></div><form className="find-form" onSubmit={e => { e.preventDefault(); navigate(`/shop${query ? `?search=${encodeURIComponent(query)}` : ''}`); }}><Search size={19} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Try “birthday”, “soft pink”..." aria-label="Find flowers" /><button type="submit">Find my flowers <ArrowRight size={16} /></button></form></section><section className="category-section page-pad"><SectionTitle eyebrow="A little something for every moment" title="Shop by what feels right" /><div className="category-grid"><Link to="/shop?category=Fresh%20%26%20Preserved%20Bouquets" className="category-tile tile-bouquet"><div><span>01</span><h3>Bouquets</h3><p>Fresh &amp; preserved</p></div><ArrowRight /></Link><Link to="/shop?category=Vases%20%26%20Floral%20Arrangements" className="category-tile tile-vase"><div><span>02</span><h3>Arrangements</h3><p>Vases &amp; floral moments</p></div><ArrowRight /></Link><Link to="/shop?category=Mirror%20%26%20Wall%20Floral%20Decor" className="category-tile tile-mirror"><div><span>03</span><h3>Mirror décor</h3><p>For walls that bloom</p></div><ArrowRight /></Link></div></section><section className="featured-section page-pad"><SectionTitle eyebrow="The ones we keep coming back to" title="Made to be remembered" link="/shop" />{loading ? <Loading /> : <div className="product-grid">{featured.map(product => <ProductCard key={product.id} product={product} onAdd={add} />)}</div>}</section><section className="custom-banner page-pad"><div className="custom-image"><img src="https://images.pexels.com/photos/17894613/pexels-photo-17894613.jpeg?auto=compress&cs=tinysrgb&h=650&w=940" alt="Artist arranging handmade paper flowers" /></div><div className="custom-copy"><span className="eyebrow">Made just for you</span><h2>Have a beautiful idea?</h2><p>From statement mirror décor to event florals that make the room pause — Cici loves bringing the almost-impossible to life.</p><Link to="/custom-orders" className="button button-dark">Start a custom request <ArrowRight size={17} /></Link><div className="signature">with love, <strong>Cici</strong></div></div></section><section className="story-section page-pad"><div><span className="eyebrow">A note from the maker</span><h2>“The best flowers are the ones that become part of your story.”</h2></div><div><p>Bloom By Cici began with a pair of hands, a love for colour, and a belief that ordinary days deserve beautiful things too. Every piece is made in small batches, with room for a little imperfection and a lot of feeling.</p><Link to="/custom-orders" className="text-link">Meet us in the details <span>→</span></Link></div></section><section className="bottom-cta"><span className="eyebrow">Ready when you are</span><h2>Let’s make something lovely.</h2><Link to="/shop" className="button button-light">Explore the collection <ArrowRight size={17} /></Link></section></>; }
+const makerImage = 'https://images.pexels.com/photos/17894613/pexels-photo-17894613.jpeg?auto=compress&cs=tinysrgb&h=650&w=940';
+
+export default function Home({ onCartOpen }: { onCartOpen: () => void }) {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const navigate = useNavigate();
+  const { addItem } = useCart();
+
+  useEffect(() => {
+    fetchProducts().then(setProducts).catch(() => setProducts([])).finally(() => setLoading(false));
+  }, []);
+
+  const featured = products.filter(product => product.featured).slice(0, 4);
+  const add = (product: Product) => {
+    addItem(product, product.sizes?.[0] ?? 'Standard', 1, '', '');
+    onCartOpen();
+  };
+
+  return <>
+    <section className="hero">
+      <div className="hero-copy">
+        <span className="eyebrow"><Sparkles size={14} /> Handmade, with heart</span>
+        <h1>Flowers that feel like <em>you.</em></h1>
+        <p>Thoughtfully made blooms, everlasting arrangements, and beautiful little details for the moments you want to keep close.</p>
+        <div className="hero-actions">
+          <Link to="/shop" className="button button-dark">Shop handmade flowers <ArrowRight size={17} /></Link>
+          <Link to="/custom-orders" className="button button-ghost">Tell us your idea</Link>
+        </div>
+        <div className="hero-note"><span className="avatar-stack"><i>✿</i><i>♡</i><i>✦</i></span><span>Loved by flower people<br /><b>near and far</b></span></div>
+        <div className="hero-proof"><span><Check size={14} /> Small-batch made</span><span><Check size={14} /> Nairobi &amp; beyond</span></div>
+      </div>
+      <div className="hero-photo">
+        <img src={heroImage} alt="A hand-tied bouquet of pink and purple flowers" />
+        <div className="photo-caption"><span>01</span><p>Made for your<br /><strong>most meaningful moments.</strong></p></div>
+        <div className="hero-float-card"><span>Freshly arranged</span><strong>For your kind of lovely</strong><Link to="/shop">Explore <ArrowRight size={14} /></Link></div>
+      </div>
+    </section>
+
+    <section className="find-section">
+      <div><span className="eyebrow">Your kind of lovely</span><h2>Find flowers for the feeling.</h2></div>
+      <form className="find-form" onSubmit={event => { event.preventDefault(); navigate(`/shop${query ? `?search=${encodeURIComponent(query)}` : ''}`); }}>
+        <Search size={19} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Try “birthday”, “soft pink”..." aria-label="Find flowers" /><button type="submit">Find my flowers <ArrowRight size={16} /></button>
+      </form>
+    </section>
+
+    <section className="feature-showcase page-pad">
+      <SectionTitle eyebrow="The Bloom By Cici way" title="A little more feeling in every detail" />
+      <div className="feature-grid">
+        <article className="feature-card feature-card-pink"><span className="feature-number">01</span><div><h3>Made slowly</h3><p>Small-batch pieces with the care and character of something made by hand.</p></div><span className="feature-mark">✦</span></article>
+        <article className="feature-card feature-card-lilac"><span className="feature-number">02</span><div><h3>Styled for you</h3><p>Soft, joyful details designed to make your space feel unmistakably yours.</p></div><span className="feature-mark">♡</span></article>
+        <article className="feature-card feature-card-sage"><span className="feature-number">03</span><div><h3>Sent with love</h3><p>Thoughtful gifting, careful wrapping, and a little magic from Nairobi to you.</p></div><span className="feature-mark">✿</span></article>
+      </div>
+    </section>
+
+    <section className="category-section page-pad"><SectionTitle eyebrow="A little something for every moment" title="Shop by what feels right" /><div className="category-grid"><Link to="/shop?category=Fresh%20%26%20Preserved%20Bouquets" className="category-tile tile-bouquet"><div><span>01</span><h3>Bouquets</h3><p>Fresh &amp; preserved</p></div><ArrowRight /></Link><Link to="/shop?category=Vases%20%26%20Floral%20Arrangements" className="category-tile tile-vase"><div><span>02</span><h3>Arrangements</h3><p>Vases &amp; floral moments</p></div><ArrowRight /></Link><Link to="/shop?category=Mirror%20%26%20Wall%20Floral%20Decor" className="category-tile tile-mirror"><div><span>03</span><h3>Mirror décor</h3><p>For walls that bloom</p></div><ArrowRight /></Link></div></section>
+
+    <section className="featured-section page-pad"><SectionTitle eyebrow="The ones we keep coming back to" title="Made to be remembered" link="/shop" />{loading ? <Loading /> : <div className="product-grid">{featured.map(product => <ProductCard key={product.id} product={product} onAdd={add} />)}</div>}</section>
+
+    <section className="custom-banner page-pad"><div className="custom-image"><img src={makerImage} alt="Artist arranging handmade paper flowers" /></div><div className="custom-copy"><span className="eyebrow">Made just for you</span><h2>Have a beautiful idea?</h2><p>From statement mirror décor to event florals that make the room pause — Cici loves bringing the almost-impossible to life.</p><Link to="/custom-orders" className="button button-dark">Start a custom request <ArrowRight size={17} /></Link><div className="signature">with love, <strong>Cici</strong></div></div></section>
+
+    <section className="story-section page-pad"><div><span className="eyebrow">A note from the maker</span><h2>“The best flowers are the ones that become part of your story.”</h2></div><div><p>Bloom By Cici began with a pair of hands, a love for colour, and a belief that ordinary days deserve beautiful things too. Every piece is made in small batches, with room for a little imperfection and a lot of feeling.</p><Link to="/custom-orders" className="text-link">Meet us in the details <span>→</span></Link></div></section>
+    <section className="bottom-cta"><span className="eyebrow">Ready when you are</span><h2>Let’s make something lovely.</h2><Link to="/shop" className="button button-light">Explore the collection <ArrowRight size={17} /></Link></section>
+  </>;
+}
