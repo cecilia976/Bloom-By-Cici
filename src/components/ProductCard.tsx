@@ -34,7 +34,7 @@ export default function ProductCard({
         </div>
 
         <div className="card-buy">
-          <strong>${product.price.toFixed(2)}</strong>
+          <strong>{product.price == null ? 'Price on request' : `$${product.price.toFixed(2)}`}</strong>
           <button
             disabled={unavailable}
             onClick={() => onAdd(product)}
