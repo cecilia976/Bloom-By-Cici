@@ -5,6 +5,7 @@ export type CustomerReview = {
   customer_name: string;
   rating: number;
   feedback: string;
+  is_approved: boolean;
   created_at: string;
 };
 
@@ -12,7 +13,8 @@ export async function fetchCustomerReviews(): Promise<CustomerReview[]> {
   assertSupabaseConfigured();
   const { data, error } = await supabase
     .from('customer_reviews')
-    .select('id, customer_name, rating, feedback, created_at')
+    .select('id, customer_name, rating, feedback, is_approved, created_at')
+    .eq('is_approved', true)
     .order('created_at', { ascending: false })
     .limit(12);
 
@@ -24,15 +26,12 @@ export async function submitCustomerReview(review: {
   customer_name: string;
   rating: number;
   feedback: string;
-}): Promise<CustomerReview> {
+}): Promise<void> {
   assertSupabaseConfigured();
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('customer_reviews')
-    .insert(review)
-    .select('id, customer_name, rating, feedback, created_at')
-    .single();
+    .insert(review);
   if (error) throw error;
-  return data;
 }
 
 export function subscribeToCustomerReviews(onChange: () => void): () => void {

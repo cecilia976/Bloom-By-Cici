@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, LockKeyhole } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, LockKeyhole } from 'lucide-react';
 import Logo from '../components/Logo';
+import { isAuthorizedAdmin } from '../lib/auth';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 export default function AdminLogin() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -15,14 +17,26 @@ export default function AdminLogin() {
     if (!isSupabaseConfigured) return;
     let active = true;
 
-    void supabase.auth.getSession()
-      .then(({ data, error: sessionError }) => {
+    void (async () => {
+      try {
+        const { data, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
-        if (active && data.session) navigate('/admin');
-      })
-      .catch(() => {
-        if (active) setError('We could not check your staff session. Please refresh and try again.');
-      });
+        if (!data.session) return;
+
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (isAuthorizedAdmin(userData.user)) {
+          if (active) navigate('/admin');
+          return;
+        }
+
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) throw signOutError;
+        if (active) setError('This account is not authorized to manage the website.');
+      } catch {
+        if (active) setError('We could not verify administrator access. Please refresh and try again.');
+      }
+    })();
 
     return () => {
       active = false;
@@ -39,14 +53,20 @@ export default function AdminLogin() {
     setLoading(true);
     setError('');
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
       if (authError) {
-        setError('Those details did not match an authorized staff account.');
+        setError('Those details did not match the authorized administrator account.');
+        return;
+      }
+      if (!data.user || !isAuthorizedAdmin(data.user)) {
+        const { error: signOutError } = await supabase.auth.signOut();
+        if (signOutError) throw signOutError;
+        setError('Those details did not match the authorized administrator account.');
         return;
       }
       navigate('/admin');
     } catch {
-      setError('We could not sign in right now. Check the Supabase connection and try again.');
+      setError('We could not sign in or verify administrator access. Check the Supabase connection and try again.');
     } finally {
       setLoading(false);
     }
@@ -59,12 +79,12 @@ export default function AdminLogin() {
         <Link to="/" className="back-link"><ArrowLeft size={15} /> Back to storefront</Link>
       </div>
       <div className="auth-card">
-        <span className="eyebrow"><LockKeyhole size={14} /> Staff area</span>
+        <span className="eyebrow"><LockKeyhole size={14} /> Administrator access</span>
         <h1>Welcome back.</h1>
-        <p>Sign in to care for the collection and customer requests.</p>
+        <p>Sign in to manage products, images, and customer reviews.</p>
         {!isSupabaseConfigured && (
           <p className="form-error" role="alert">
-            Admin access is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then create an administrator account in Supabase.
+            Admin access is not configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY), then create an administrator account in Supabase.
           </p>
         )}
         <form onSubmit={submit}>
@@ -74,14 +94,25 @@ export default function AdminLogin() {
           </label>
           <label>
             Password
-            <input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={!isSupabaseConfigured} />
+            <span className="auth-password-field">
+              <input required type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={!isSupabaseConfigured} />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+              </button>
+            </span>
           </label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="button button-dark button-full" disabled={loading || !isSupabaseConfigured}>
             {loading ? 'Checking…' : 'Sign in'}
           </button>
         </form>
-        <small className="auth-footnote">Staff access is managed securely through the store account.</small>
+        <small className="auth-footnote">Administrator access is managed through Supabase. Registration is disabled.</small>
       </div>
     </div>
   );

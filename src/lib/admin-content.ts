@@ -1,4 +1,5 @@
 import { assertSupabaseConfigured, supabase } from './supabase';
+import { supabaseUrl } from './supabase-config';
 
 export type GalleryItem = {
   id: string;
@@ -50,6 +51,35 @@ export async function deleteAdminImages(paths: string[]): Promise<void> {
   if (error) throw error;
 }
 
+export async function deleteAdminImageIfUnused(
+  path: string,
+  url: string,
+  excludedGalleryId?: string,
+): Promise<void> {
+  assertSupabaseConfigured();
+  const [productsResult, galleryResult, contentResult, inquiriesResult] = await Promise.all([
+    supabase.from('products').select('id').contains('images', [url]).limit(1),
+    supabase.from('gallery_items').select('id,storage_path,image_url'),
+    supabase.from('site_content').select('content_value'),
+    supabase.from('inquiries').select('id').contains('image_urls', [url]).limit(1),
+  ]);
+  const queryError = productsResult.error ?? galleryResult.error ?? contentResult.error ?? inquiriesResult.error;
+  if (queryError) throw queryError;
+
+  const referencedByProduct = (productsResult.data ?? []).length > 0;
+  const referencedByGallery = (galleryResult.data ?? []).some((item) =>
+    item.id !== excludedGalleryId && (item.storage_path === path || item.image_url === url),
+  );
+  const referencedByContent = (contentResult.data ?? []).some((item) =>
+    JSON.stringify(item.content_value).includes(url) || JSON.stringify(item.content_value).includes(path),
+  );
+  const referencedByInquiry = (inquiriesResult.data ?? []).length > 0;
+
+  if (!referencedByProduct && !referencedByGallery && !referencedByContent && !referencedByInquiry) {
+    await deleteAdminImages([path]);
+  }
+}
+
 export async function readSiteContent<T>(key: string, fallback: T): Promise<T> {
   assertSupabaseConfigured();
   const { data, error } = await supabase
@@ -84,5 +114,53 @@ export async function deleteGalleryItem(item: GalleryItem): Promise<void> {
   assertSupabaseConfigured();
   const { error: rowError } = await supabase.from('gallery_items').delete().eq('id', item.id);
   if (rowError) throw rowError;
-  await deleteAdminImages([item.storage_path]);
+  await deleteAdminImageIfUnused(item.storage_path, item.image_url, item.id);
+}
+
+export async function replaceGalleryImage(
+  item: GalleryItem,
+  file: File,
+): Promise<GalleryItem> {
+  assertSupabaseConfigured();
+  const upload = await uploadAdminImage(file);
+  const { data, error } = await supabase
+    .from('gallery_items')
+    .update({ storage_path: upload.path, image_url: upload.url })
+    .eq('id', item.id)
+    .select()
+    .single();
+
+  if (error) {
+    try {
+      await deleteAdminImages([upload.path]);
+    } catch (cleanupError) {
+      throw new Error(
+        `The image could not be replaced and the new upload may need manual cleanup: ${cleanupError instanceof Error ? cleanupError.message : 'unknown cleanup error'}`,
+      );
+    }
+    throw error;
+  }
+
+  try {
+    await deleteAdminImageIfUnused(item.storage_path, item.image_url, item.id);
+  } catch (error) {
+    throw new Error(
+      `The image replacement was saved, but the previous file could not be cleaned up: ${error instanceof Error ? error.message : 'unknown cleanup error'}`,
+    );
+  }
+  return data as GalleryItem;
+}
+
+export function getAdminImageStoragePath(url: string): string | null {
+  try {
+    const imageUrl = new URL(url);
+    const projectUrl = new URL(supabaseUrl);
+    if (imageUrl.origin !== projectUrl.origin) return null;
+    const marker = '/storage/v1/object/public/bloom-assets/';
+    const markerIndex = imageUrl.pathname.indexOf(marker);
+    if (markerIndex < 0) return null;
+    return decodeURIComponent(imageUrl.pathname.slice(markerIndex + marker.length));
+  } catch {
+    return null;
+  }
 }

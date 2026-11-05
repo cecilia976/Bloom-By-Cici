@@ -1,9 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
+import { isSupabaseConfigured, supabaseKey, supabaseUrl } from './supabase-config';
 
-const url = import.meta.env.VITE_SUPABASE_URL ?? '';
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
-
-export const isSupabaseConfigured = Boolean(url && key);
+export { isSupabaseConfigured } from './supabase-config';
 
 export function assertSupabaseConfigured(): void {
   if (!isSupabaseConfigured) {
@@ -12,6 +10,6 @@ export function assertSupabaseConfigured(): void {
 }
 
 export const supabase = createClient(
-  url || 'http://127.0.0.1:54321',
-  key || 'supabase-not-configured',
+  supabaseUrl || 'http://127.0.0.1:54321',
+  supabaseKey || 'supabase-not-configured',
 );

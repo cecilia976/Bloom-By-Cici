@@ -13,6 +13,7 @@ import {
   Star,
 } from "lucide-react";
 import type { CustomerReview } from "./lib/reviews";
+import { isSupabaseConfigured as reviewServiceConfigured } from "./lib/supabase-config";
 import "./styles.css";
 
 const products = [
@@ -89,9 +90,6 @@ const collections = [
 
 type Product = (typeof products)[number];
 type Collection = (typeof collections)[number];
-const reviewServiceConfigured = Boolean(
-  import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY,
-);
 
 export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -399,12 +397,11 @@ export default function App() {
     setReviewSubmitting(true);
     try {
       const { submitCustomerReview } = await import("./lib/reviews");
-      const submittedReview = await submitCustomerReview({
+      await submitCustomerReview({
         customer_name: reviewName.trim(),
         rating: reviewRating,
         feedback: reviewFeedback.trim(),
       });
-      setReviews((current) => [submittedReview, ...current.filter((review) => review.id !== submittedReview.id)].slice(0, 12));
       setReviewName("");
       setReviewRating(0);
       setReviewFeedback("");
@@ -733,7 +730,7 @@ export default function App() {
             {reviewSubmitError && <p className="review-submit-error" role="alert">{reviewSubmitError}</p>}
             {reviewSubmitted && (
               <p className="review-submit-success" role="status">
-                Thank you for sharing your experience! Your review is now visible in the testimonials.
+                Thank you for sharing your experience! Your review will appear after the administrator approves it.
               </p>
             )}
             <p className="review-privacy-note">Please keep reviews kind and respectful. Reviews may be removed by the Bloom By Cici team.</p>

@@ -1,36 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChangeEvent, FormEvent, ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowUp,
   ArrowDown,
-  Image,
   LayoutDashboard,
   LogOut,
-  MessageCircle,
-  Pencil,
   Plus,
   Search,
-  Settings,
   Star,
   Trash2,
   X,
   Flower2,
   Images,
-  Globe,
-  UserRound,
   Package,
-  Inbox,
+  Pencil,
+  Eye,
+  EyeOff,
+  Check,
 } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isAuthorizedAdmin } from '../lib/auth';
 import type { CustomerReview } from '../lib/reviews';
-import type { Inquiry, Product, Category, StockStatus } from '../lib/types';
+import type { Product, Category, StockStatus } from '../lib/types';
 import {
+  deleteAdminImageIfUnused,
   deleteAdminImages,
   deleteGalleryItem,
   fetchGalleryItems,
-  readSiteContent,
-  saveSiteContent,
+  getAdminImageStoragePath,
+  replaceGalleryImage,
   uploadAdminImage,
   validateImageFile,
 } from '../lib/admin-content';
@@ -52,46 +51,17 @@ const categoryLabels: Record<Category, string> = {
 
 const adminPages = [
   { key: 'overview', label: 'Dashboard Overview', icon: LayoutDashboard },
-  { key: 'collections', label: 'Manage Collections', icon: Flower2 },
-  { key: 'reviews', label: 'Manage Reviews', icon: Star },
-  { key: 'homepage', label: 'Manage Homepage', icon: Image },
-  { key: 'gallery', label: 'Manage Gallery', icon: Images },
-  { key: 'information', label: 'Website Information', icon: Globe },
-  { key: 'whatsapp', label: 'WhatsApp Settings', icon: MessageCircle },
-  { key: 'account', label: 'Admin Account', icon: UserRound },
+  { key: 'products', label: 'Products', icon: Flower2 },
+  { key: 'gallery', label: 'Gallery & Images', icon: Images },
+  { key: 'reviews', label: 'Customer Reviews', icon: Star },
 ] as const;
 
 type AdminPage = (typeof adminPages)[number]['key'];
 type ManagedProduct = Omit<Product, 'price'> & { price: number | null; active: boolean; display_order: number };
 type DashboardData = {
   products: ManagedProduct[];
-  inquiries: Inquiry[];
   reviews: CustomerReview[];
 };
-type ProductDraft = {
-  title: string;
-  category: Category;
-  description: string;
-  price: string;
-  stock_status: StockStatus;
-  active: boolean;
-  display_order: string;
-  image_url: string;
-  images: string[];
-};
-type ContentFields = Record<string, string>;
-
-const emptyProductDraft = (): ProductDraft => ({
-  title: '',
-  category: categories[0],
-  description: '',
-  price: '',
-  stock_status: 'In stock',
-  active: true,
-  display_order: '0',
-  image_url: '',
-  images: [],
-});
 
 function isAdminPage(value: string | undefined): value is AdminPage {
   return adminPages.some((page) => page.key === value);
@@ -113,28 +83,33 @@ export default function Admin() {
   const navigate = useNavigate();
   const location = useLocation();
   const pagePart = location.pathname.split('/')[2];
-  const page: AdminPage = isAdminPage(pagePart) ? pagePart : 'overview';
+  const resolvedPagePart = pagePart === 'collections' ? 'products' : pagePart;
+  const page: AdminPage = isAdminPage(resolvedPagePart) ? resolvedPagePart : 'overview';
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<DashboardData>({ products: [], inquiries: [], reviews: [] });
+  const [data, setData] = useState<DashboardData>({ products: [], reviews: [] });
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
-  const [currentUser, setCurrentUser] = useState<{ email: string; name: string } | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
-  const [homepage, setHomepage] = useState<ContentFields>({});
-  const [websiteInfo, setWebsiteInfo] = useState<ContentFields>({});
-  const [whatsappSettings, setWhatsappSettings] = useState<ContentFields>({});
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'hidden'>('all');
   const [categoryFilter, setCategoryFilter] = useState<Category | 'all'>('all');
   const [productSearch, setProductSearch] = useState('');
   const [reviewSearch, setReviewSearch] = useState('');
   const [reviewRatingFilter, setReviewRatingFilter] = useState('all');
+  const [reviewStatusFilter, setReviewStatusFilter] = useState<'all' | 'pending' | 'approved'>('all');
   const [productEditor, setProductEditor] = useState<ManagedProduct | null | false>(false);
   const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [moderatingReviewId, setModeratingReviewId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' && active) {
+        setAuthorized(false);
+      }
+      if (session && !isAuthorizedAdmin(session.user) && active) setAuthorized(false);
+    });
 
     async function initialize() {
       if (!isSupabaseConfigured) {
@@ -154,41 +129,24 @@ export default function Admin() {
           return;
         }
 
-        const { data: staff, error: staffError } = await supabase
-          .from('staff_profiles')
-          .select('role')
-          .eq('user_id', authData.session.user.id)
-          .maybeSingle();
-        if (staffError) throw staffError;
-        if (staff?.role !== 'admin') {
-          await supabase.auth.signOut();
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!isAuthorizedAdmin(userData.user)) {
+          const { error: signOutError } = await supabase.auth.signOut();
+          if (signOutError) throw signOutError;
           if (active) setAuthorized(false);
           return;
         }
 
-        if (active) {
-          setCurrentUser({
-            email: authData.session.user.email ?? '',
-            name: String(authData.session.user.user_metadata?.full_name ?? ''),
-          });
-          setAuthorized(true);
-        }
+        if (active) setAuthorized(true);
         await reloadDashboard();
-        const [galleryItems, homeContent, information, whatsapp] = await Promise.all([
-          fetchGalleryItems(),
-          readSiteContent<ContentFields>('homepage', {}),
-          readSiteContent<ContentFields>('website_information', {}),
-          readSiteContent<ContentFields>('whatsapp_settings', {}),
-        ]);
+        const galleryItems = await fetchGalleryItems();
+        if (active) setGallery(galleryItems);
+      } catch (error) {
         if (active) {
-          setGallery(galleryItems);
-          setHomepage(homeContent);
-          setWebsiteInfo(information);
-          setWhatsappSettings(whatsapp);
-        }
-      } catch {
-        if (active) {
-          setErrorMessage('Dashboard data could not be loaded. Confirm the database migrations are applied and try again.');
+          setErrorMessage(error instanceof Error
+            ? `Dashboard data could not be loaded: ${error.message}`
+            : 'Dashboard data could not be loaded. Confirm the database migrations are applied and try again.');
           setAuthorized((current) => current ?? false);
         }
       } finally {
@@ -197,17 +155,15 @@ export default function Admin() {
     }
 
     async function reloadDashboard() {
-      const [productsResult, inquiriesResult, reviewsResult] = await Promise.all([
+      const [productsResult, reviewsResult] = await Promise.all([
         supabase.from('products').select('*').order('display_order').order('created_at', { ascending: false }),
-        supabase.from('inquiries').select('*').order('created_at', { ascending: false }),
         supabase.from('customer_reviews').select('*').order('created_at', { ascending: false }),
       ]);
-      const dataError = productsResult.error ?? inquiriesResult.error ?? reviewsResult.error;
+      const dataError = productsResult.error ?? reviewsResult.error;
       if (dataError) throw dataError;
       if (active) {
         setData({
           products: (productsResult.data ?? []) as ManagedProduct[],
-          inquiries: (inquiriesResult.data ?? []) as Inquiry[],
           reviews: (reviewsResult.data ?? []) as CustomerReview[],
         });
       }
@@ -216,20 +172,19 @@ export default function Admin() {
     void initialize();
     return () => {
       active = false;
+      subscription.unsubscribe();
     };
   }, []);
 
   async function reloadDashboard() {
-    const [productsResult, inquiriesResult, reviewsResult] = await Promise.all([
+    const [productsResult, reviewsResult] = await Promise.all([
       supabase.from('products').select('*').order('display_order').order('created_at', { ascending: false }),
-      supabase.from('inquiries').select('*').order('created_at', { ascending: false }),
       supabase.from('customer_reviews').select('*').order('created_at', { ascending: false }),
     ]);
-    const dataError = productsResult.error ?? inquiriesResult.error ?? reviewsResult.error;
+    const dataError = productsResult.error ?? reviewsResult.error;
     if (dataError) throw dataError;
     setData({
       products: (productsResult.data ?? []) as ManagedProduct[],
-      inquiries: (inquiriesResult.data ?? []) as Inquiry[],
       reviews: (reviewsResult.data ?? []) as CustomerReview[],
     });
   }
@@ -289,13 +244,25 @@ export default function Admin() {
         : await supabase.from('products').insert(payload).select().single();
       if (result.error) throw result.error;
       productSaved = true;
+      if (productEditor && uploaded.length) {
+        await Promise.all(productEditor.images.map(async (url) => {
+          const path = getAdminImageStoragePath(url);
+          if (path) await deleteAdminImageIfUnused(path, url);
+        }));
+      }
       await reloadDashboard();
       setProductEditor(false);
       setNotice('Arrangement saved.');
     } catch (error) {
       if (productSaved) {
         setProductEditor(false);
-        reportError(new Error('Arrangement saved, but the dashboard could not refresh. Reload the page to verify the latest data.'), 'The arrangement was saved but could not be refreshed.');
+        let detail = `The arrangement was saved, but follow-up work failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+        try {
+          await reloadDashboard();
+        } catch (refreshError) {
+          detail += ` Dashboard refresh also failed: ${refreshError instanceof Error ? refreshError.message : 'unknown error'}`;
+        }
+        reportError(new Error(detail), 'The arrangement was saved but follow-up work failed.');
         return;
       }
       if (!productSaved && uploaded.length) {
@@ -319,11 +286,22 @@ export default function Admin() {
       const { error } = await supabase.from('products').delete().eq('id', product.id);
       if (error) throw error;
       deleted = true;
+      await Promise.all(product.images.map(async (url) => {
+        const path = getAdminImageStoragePath(url);
+        if (path) await deleteAdminImageIfUnused(path, url);
+      }));
       await reloadDashboard();
       setNotice('Arrangement deleted.');
     } catch (error) {
       if (deleted) {
-        reportError(new Error('Arrangement deleted, but the dashboard could not refresh. Reload the page to verify the latest data.'), 'The arrangement was deleted but could not be refreshed.');
+        setData((current) => ({ ...current, products: current.products.filter((item) => item.id !== product.id) }));
+        let detail = `Arrangement deleted, but follow-up work failed: ${error instanceof Error ? error.message : 'unknown error'}`;
+        try {
+          await reloadDashboard();
+        } catch (refreshError) {
+          detail += ` Dashboard refresh also failed: ${refreshError instanceof Error ? refreshError.message : 'unknown error'}`;
+        }
+        reportError(new Error(detail), 'The arrangement was deleted but follow-up work failed.');
         return;
       }
       reportError(error, 'The arrangement could not be deleted.');
@@ -376,18 +354,26 @@ export default function Admin() {
     }
   }
 
-  async function saveContent(key: string, value: Record<string, unknown>, label: string): Promise<boolean> {
-    setSaving(true);
+  async function moderateReview(review: CustomerReview, isApproved: boolean) {
+    setModeratingReviewId(review.id);
     setErrorMessage('');
     try {
-      await saveSiteContent(key, value);
-      setNotice(`${label} saved.`);
-      return true;
+      const { error } = await supabase
+        .from('customer_reviews')
+        .update({ is_approved: isApproved })
+        .eq('id', review.id);
+      if (error) throw error;
+      setData((current) => ({
+        ...current,
+        reviews: current.reviews.map((item) => item.id === review.id
+          ? { ...item, is_approved: isApproved }
+          : item),
+      }));
+      setNotice(isApproved ? 'Review approved and published.' : 'Review hidden from the website.');
     } catch (error) {
-      reportError(error, `${label} could not be saved. Apply the admin content migration and try again.`);
-      return false;
+      reportError(error, 'The review status could not be changed.');
     } finally {
-      setSaving(false);
+      setModeratingReviewId(null);
     }
   }
 
@@ -419,12 +405,10 @@ export default function Admin() {
 
   if (loading) return <Loading label="Opening the studio…" />;
   if (!authorized) return <Navigate to="/admin/login" replace />;
-  if (!isAdminPage(pagePart) && pagePart !== undefined) return <Navigate to="/admin/overview" replace />;
+  if (!isAdminPage(resolvedPagePart) && pagePart !== undefined) return <Navigate to="/admin/overview" replace />;
 
   const title = adminPages.find((item) => item.key === page)?.label ?? 'Dashboard Overview';
-  const averageRating = data.reviews.length
-    ? data.reviews.reduce((sum, review) => sum + review.rating, 0) / data.reviews.length
-    : 0;
+  const pendingReviews = data.reviews.filter((review) => !review.is_approved);
   const visibleProducts = data.products
     .filter((product) => activeFilter === 'all' || (activeFilter === 'active' ? product.active : !product.active))
     .filter((product) => categoryFilter === 'all' || product.category === categoryFilter)
@@ -434,7 +418,9 @@ export default function Admin() {
     .slice(0, 5);
   const visibleReviews = data.reviews.filter((review) => {
     const matchesText = `${review.customer_name} ${review.feedback}`.toLowerCase().includes(reviewSearch.toLowerCase());
-    return matchesText && (reviewRatingFilter === 'all' || String(review.rating) === reviewRatingFilter);
+    const matchesStatus = reviewStatusFilter === 'all'
+      || (reviewStatusFilter === 'pending' ? !review.is_approved : review.is_approved);
+    return matchesText && matchesStatus && (reviewRatingFilter === 'all' || String(review.rating) === reviewRatingFilter);
   });
 
   return (
@@ -468,22 +454,15 @@ export default function Admin() {
           <AdminPageFrame>
             <div className="admin-stat-grid">
               <StatCard label="Floral arrangements" value={data.products.length} icon={<Package />} />
-              {categories.map((category) => (
-                <StatCard
-                  key={category}
-                  label={categoryLabels[category]}
-                  value={data.products.filter((product) => product.category === category).length}
-                  icon={<Flower2 />}
-                />
-              ))}
+              <StatCard label="Gallery images" value={gallery.length} icon={<Images />} />
               <StatCard label="Customer reviews" value={data.reviews.length} icon={<Star />} />
-              <StatCard label="Average rating" value={data.reviews.length ? `${averageRating.toFixed(1)} / 5` : '—'} icon={<Star />} />
+              <StatCard label="Pending reviews" value={pendingReviews.length} icon={<EyeOff />} />
             </div>
             <div className="admin-overview-columns">
               <div className="admin-panel">
                 <div className="admin-panel-heading">
                   <h2>Recently added arrangements</h2>
-                  <Link to="/admin/collections">Manage collections <span aria-hidden="true">→</span></Link>
+                  <Link to="/admin/products">Manage products <span aria-hidden="true">→</span></Link>
                 </div>
                 {recentProducts.map((product) => (
                   <div className="admin-recent-item" key={product.id}>
@@ -496,27 +475,27 @@ export default function Admin() {
               </div>
               <div className="admin-panel">
                 <div className="admin-panel-heading">
-                  <h2>Recently submitted reviews</h2>
+                  <h2>Reviews awaiting approval</h2>
                   <Link to="/admin/reviews">Manage reviews <span aria-hidden="true">→</span></Link>
                 </div>
-                {data.reviews.slice(0, 5).map((review) => (
+                {pendingReviews.slice(0, 5).map((review) => (
                   <div className="admin-recent-review" key={review.id}>
                     <div><strong>{review.customer_name}</strong><span>{review.rating} of 5 stars · {formatDate(review.created_at)}</span></div>
                     <p>{review.feedback}</p>
                   </div>
                 ))}
-                {!data.reviews.length && <p className="admin-empty">No customer reviews yet.</p>}
+                {!pendingReviews.length && <p className="admin-empty">No reviews are waiting for approval.</p>}
               </div>
             </div>
             <div className="admin-quick-actions">
-              <Link to="/admin/collections"><Plus size={16} /> Add arrangement</Link>
-              <Link to="/admin/gallery"><Images size={16} /> Update gallery</Link>
-              <Link to="/admin/homepage"><Pencil size={16} /> Edit homepage</Link>
+              <button className="admin-secondary-button" type="button" onClick={() => setProductEditor(null)}><Plus size={16} /> Add a product</button>
+              <Link to="/admin/gallery"><Images size={16} /> Upload an image</Link>
+              <Link to="/admin/reviews"><Star size={16} /> View reviews</Link>
             </div>
           </AdminPageFrame>
         )}
 
-        {page === 'collections' && (
+        {page === 'products' && (
           <AdminPageFrame>
             <div className="admin-toolbar">
               <label className="admin-search"><Search size={17} /><input value={productSearch} onChange={(event) => setProductSearch(event.target.value)} placeholder="Search arrangements" /></label>
@@ -564,6 +543,11 @@ export default function Admin() {
                 <option value="all">All ratings</option>
                 {[5, 4, 3, 2, 1].map((rating) => <option value={rating} key={rating}>{rating} stars</option>)}
               </select>
+              <select aria-label="Filter reviews by approval" value={reviewStatusFilter} onChange={(event) => setReviewStatusFilter(event.target.value as typeof reviewStatusFilter)}>
+                <option value="all">All review statuses</option>
+                <option value="pending">Awaiting approval</option>
+                <option value="approved">Published</option>
+              </select>
               <span>{visibleReviews.length} reviews</span>
             </div>
             <div className="admin-reviews">
@@ -576,6 +560,17 @@ export default function Admin() {
                     </span>
                   </div>
                   <p>{review.feedback}</p>
+                  <span className={review.is_approved ? 'admin-status published' : 'admin-status hidden'}>
+                    {review.is_approved ? 'Published' : 'Awaiting approval'}
+                  </span>
+                  <button
+                    className="admin-review-moderate"
+                    type="button"
+                    disabled={moderatingReviewId === review.id}
+                    onClick={() => void moderateReview(review, !review.is_approved)}
+                  >
+                    {review.is_approved ? <><EyeOff size={16} /> Hide review</> : <><Check size={16} /> Approve review</>}
+                  </button>
                   <button className="admin-review-delete" type="button" disabled={deletingReviewId === review.id} onClick={() => void deleteReview(review)}>
                     <Trash2 size={16} /> {deletingReviewId === review.id ? 'Deleting…' : 'Delete review'}
                   </button>
@@ -586,18 +581,6 @@ export default function Admin() {
           </AdminPageFrame>
         )}
 
-        {page === 'homepage' && (
-          <HomepageEditor
-            value={homepage}
-            saving={saving}
-            onSave={(value) => {
-              void saveContent('homepage', value, 'Homepage content').then((saved) => {
-                if (saved) setHomepage(value);
-              });
-            }}
-          />
-        )}
-
         {page === 'gallery' && (
           <GalleryEditor
             items={gallery}
@@ -605,72 +588,6 @@ export default function Admin() {
             onChange={setGallery}
             onDelete={deleteGalleryPhoto}
             onError={(message) => setErrorMessage(message)}
-            onNotice={setNotice}
-          />
-        )}
-
-        {page === 'information' && (
-          <SettingsEditor
-            title="Business details"
-            description="Keep the business identity and contact information consistent across the website."
-            value={websiteInfo}
-            fields={[
-              ['business_name', 'Business name'],
-              ['logo_url', 'Logo image URL'],
-              ['description', 'Business description'],
-              ['contact_email', 'Contact email'],
-              ['phone', 'Business phone number'],
-              ['location', 'Business location'],
-              ['instagram', 'Instagram URL'],
-              ['other_social', 'Other social links'],
-              ['footer', 'Footer information'],
-            ]}
-            saving={saving}
-            onSave={(value) => {
-              void saveContent('website_information', value, 'Website information').then((saved) => {
-                if (saved) setWebsiteInfo(value);
-              });
-            }}
-          />
-        )}
-
-        {page === 'whatsapp' && (
-          <SettingsEditor
-            title="WhatsApp contact"
-            description="Update the contact details and floating prompt used by the public website."
-            value={whatsappSettings}
-            fields={[
-              ['phone', 'WhatsApp number (international format)'],
-              ['default_message', 'Default inquiry message'],
-              ['widget_enabled', 'Floating WhatsApp button enabled (true/false)'],
-              ['introduction', 'Widget introduction text'],
-            ]}
-            saving={saving}
-            onSave={(value) => {
-              void saveContent('whatsapp_settings', value, 'WhatsApp settings').then((saved) => {
-                if (saved) setWhatsappSettings(value);
-              });
-            }}
-          />
-        )}
-
-        {page === 'account' && (
-          <AccountSettings
-            user={currentUser}
-            saving={saving}
-            onSaveName={async (name) => {
-              if (!name.trim()) throw new Error('Enter your display name.');
-              const { error } = await supabase.auth.updateUser({ data: { full_name: name.trim() } });
-              if (error) throw error;
-              setCurrentUser((current) => current ? { ...current, name: name.trim() } : current);
-            }}
-            onSavePassword={async (password) => {
-              if (password.length < 10) throw new Error('Use a password with at least 10 characters.');
-              const { error } = await supabase.auth.updateUser({ password });
-              if (error) throw error;
-            }}
-            setSaving={setSaving}
-            onError={reportError}
             onNotice={setNotice}
           />
         )}
@@ -705,11 +622,15 @@ function ProductEditor({
 }) {
   const [photoPreviews, setPhotoPreviews] = useState<string[]>(product?.images ?? []);
 
+  useEffect(() => () => {
+    photoPreviews.filter((url) => url.startsWith('blob:')).forEach((url) => URL.revokeObjectURL(url));
+  }, [photoPreviews]);
+
   function updatePreviews(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     try {
       files.forEach(validateImageFile);
-      setPhotoPreviews([...files.map((file) => URL.createObjectURL(file)), ...(product?.images ?? [])]);
+      setPhotoPreviews(files.length ? files.map((file) => URL.createObjectURL(file)) : product?.images ?? []);
     } catch (error) {
       event.target.value = '';
       window.alert(error instanceof Error ? error.message : 'Invalid image file.');
@@ -743,103 +664,6 @@ function ProductEditor({
   );
 }
 
-type EditableHomepage = {
-  hero_headline: string;
-  hero_intro: string;
-  hero_image: string;
-  hero_button: string;
-  hero_destination: string;
-  about_heading: string;
-  about_story: string;
-  about_image: string;
-  collections: { title: string; description: string; image: string; order: string }[];
-};
-
-const defaultHomepage: EditableHomepage = {
-  hero_headline: 'Flowers that speak from the heart.',
-  hero_intro: 'Find a thoughtful bouquet for a celebration, a kind gesture, or simply to bring a little beauty into the day.',
-  hero_image: '',
-  hero_button: 'Shop flowers',
-  hero_destination: '#shop',
-  about_heading: 'Every flower can say something.',
-  about_story: 'At Bloom By Cici, handmade bouquets, flowers in vases, and floral mirror décor make a moment or a favourite room feel personal.',
-  about_image: '',
-  collections: [
-    { title: 'Handmade bouquets', description: 'Thoughtful flowers, tied by hand', image: '', order: '1' },
-    { title: 'Flowers in vases', description: 'A little beauty for your home', image: '', order: '2' },
-    { title: 'Floral mirror décor', description: 'Hand-finished pieces for your walls', image: '', order: '3' },
-  ],
-};
-
-function HomepageEditor({
-  value,
-  saving,
-  onSave,
-}: {
-  value: ContentFields;
-  saving: boolean;
-  onSave: (value: ContentFields) => void;
-}) {
-  const parsed = useMemo((): EditableHomepage => {
-    try {
-      return { ...defaultHomepage, ...(JSON.parse(value.content ?? '{}') as Partial<EditableHomepage>) };
-    } catch {
-      return defaultHomepage;
-    }
-  }, [value]);
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const collections = parsed.collections.map((item, index) => ({
-      title: String(formData.get(`collection-title-${index}`) ?? '').trim(),
-      description: String(formData.get(`collection-description-${index}`) ?? '').trim(),
-      image: String(formData.get(`collection-image-${index}`) ?? '').trim(),
-      order: String(formData.get(`collection-order-${index}`) ?? index + 1),
-    }));
-    onSave({
-      content: JSON.stringify({
-        hero_headline: formData.get('hero_headline'),
-        hero_intro: formData.get('hero_intro'),
-        hero_image: formData.get('hero_image'),
-        hero_button: formData.get('hero_button'),
-        hero_destination: formData.get('hero_destination'),
-        about_heading: formData.get('about_heading'),
-        about_story: formData.get('about_story'),
-        about_image: formData.get('about_image'),
-        collections,
-      }),
-    });
-  }
-
-  return (
-    <SettingsForm title="Homepage content" description="Edit the hero, About section, and collection feature content." saving={saving} onSubmit={handleSubmit}>
-      <fieldset className="admin-fieldset"><legend>Hero section</legend>
-        <label>Headline<input name="hero_headline" required defaultValue={parsed.hero_headline} /></label>
-        <label>Introductory text<textarea name="hero_intro" rows={3} required defaultValue={parsed.hero_intro} /></label>
-        <label>Hero image URL<input name="hero_image" type="url" defaultValue={parsed.hero_image} placeholder="Upload in Gallery and paste its public URL" /></label>
-        <div className="input-grid"><label>Button text<input name="hero_button" defaultValue={parsed.hero_button} /></label><label>Button destination<input name="hero_destination" defaultValue={parsed.hero_destination} /></label></div>
-      </fieldset>
-      <fieldset className="admin-fieldset"><legend>About Bloom By Cici</legend>
-        <label>Section heading<input name="about_heading" required defaultValue={parsed.about_heading} /></label>
-        <label>Brand story<textarea name="about_story" rows={4} required defaultValue={parsed.about_story} /></label>
-        <label>About photograph URL<input name="about_image" type="url" defaultValue={parsed.about_image} placeholder="Upload in Gallery and paste its public URL" /></label>
-      </fieldset>
-      <fieldset className="admin-fieldset"><legend>Our collections</legend>
-        {parsed.collections.map((collection, index) => (
-          <div className="admin-collection-fields" key={index}>
-            <h3>{categoryLabels[categories[index]]}</h3>
-            <label>Collection title<input name={`collection-title-${index}`} defaultValue={collection.title} /></label>
-            <label>Description<input name={`collection-description-${index}`} defaultValue={collection.description} /></label>
-            <label>Photo URL<input name={`collection-image-${index}`} type="url" defaultValue={collection.image} /></label>
-            <label>Display order<input name={`collection-order-${index}`} type="number" defaultValue={collection.order} /></label>
-          </div>
-        ))}
-      </fieldset>
-    </SettingsForm>
-  );
-}
-
 function GalleryEditor({
   items,
   saving,
@@ -857,21 +681,49 @@ function GalleryEditor({
 }) {
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingPreviews, setPendingPreviews] = useState<string[]>([]);
+  const [uploadedCount, setUploadedCount] = useState(0);
+  const [replacement, setReplacement] = useState<{ item: GalleryItem; file: File; preview: string } | null>(null);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
 
-  async function uploadPhotos(event: ChangeEvent<HTMLInputElement>) {
+  useEffect(() => () => {
+    pendingPreviews.forEach((url) => URL.revokeObjectURL(url));
+    if (replacement) URL.revokeObjectURL(replacement.preview);
+  }, [pendingPreviews, replacement]);
+
+  function choosePhotos(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (!files.length) return;
+    try {
+      files.forEach(validateImageFile);
+      setPendingFiles(files);
+      setPendingPreviews(files.map((file) => URL.createObjectURL(file)));
+      onError('');
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Choose valid image files.');
+    } finally {
+      event.target.value = '';
+    }
+  }
+
+  async function uploadPhotos() {
+    if (!pendingFiles.length) return;
     setUploading(true);
+    setUploadedCount(0);
     onError('');
     const uploads: { path: string; url: string }[] = [];
     const createdIds: string[] = [];
     try {
-      for (const file of files) uploads.push(await uploadAdminImage(file));
+      for (const file of pendingFiles) {
+        uploads.push(await uploadAdminImage(file));
+        setUploadedCount(uploads.length);
+      }
       const inserts = await Promise.all(uploads.map((image, index) =>
         supabase.from('gallery_items').insert({
           storage_path: image.path,
           image_url: image.url,
-          caption: files[index].name.replace(/\.[^.]+$/, ''),
+          caption: pendingFiles[index].name.replace(/\.[^.]+$/, ''),
           display_order: items.length + index,
           is_public: true,
         }).select().single(),
@@ -881,24 +733,66 @@ function GalleryEditor({
       if (insertError) throw insertError;
       onChange([...inserts.map((result) => result.data as GalleryItem), ...items]);
       onNotice('Photographs uploaded.');
-      event.target.value = '';
+      setPendingFiles([]);
+      setPendingPreviews([]);
     } catch (error) {
       const cleanupErrors: string[] = [];
+      let canDeleteFiles = true;
       if (createdIds.length) {
         const { error: rowCleanupError } = await supabase.from('gallery_items').delete().in('id', createdIds);
-        if (rowCleanupError) cleanupErrors.push('Some gallery records may need manual cleanup.');
+        if (rowCleanupError) {
+          canDeleteFiles = false;
+          cleanupErrors.push('Some gallery records may need manual cleanup; their image files were retained to avoid broken references.');
+        }
       }
-      if (uploads.length) {
+      if (uploads.length && canDeleteFiles) {
         try {
           await deleteAdminImages(uploads.map((image) => image.path));
-        } catch {
-          cleanupErrors.push('Some uploaded files may need manual cleanup.');
+        } catch (cleanupError) {
+          cleanupErrors.push(`Some uploaded files may need manual cleanup: ${cleanupError instanceof Error ? cleanupError.message : 'storage cleanup failed.'}`);
         }
       }
       const message = error instanceof Error ? error.message : 'Photographs could not be uploaded.';
       onError(cleanupErrors.length ? `${message} ${cleanupErrors.join(' ')}` : message);
     } finally {
       setUploading(false);
+    }
+  }
+
+  function chooseReplacement(item: GalleryItem, event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      validateImageFile(file);
+      setReplacement({ item, file, preview: URL.createObjectURL(file) });
+      onError('');
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Choose a valid image file.');
+    }
+  }
+
+  async function confirmReplacement() {
+    if (!replacement) return;
+    setReplacingId(replacement.item.id);
+    onError('');
+    try {
+      const updatedItem = await replaceGalleryImage(replacement.item, replacement.file);
+      onChange(items.map((item) => item.id === updatedItem.id ? updatedItem : item));
+      onNotice('Gallery image replaced.');
+      setReplacement(null);
+    } catch (error) {
+      let message = error instanceof Error ? error.message : 'The gallery image could not be replaced.';
+      try {
+        const latestItems = await fetchGalleryItems();
+        onChange(latestItems);
+      } catch (refreshError) {
+        message += ` Gallery refresh failed: ${refreshError instanceof Error ? refreshError.message : 'unknown error'}`;
+      }
+      onError(message);
+      setReplacement(null);
+    } finally {
+      setReplacingId(null);
     }
   }
 
@@ -948,19 +842,37 @@ function GalleryEditor({
   return (
     <AdminPageFrame>
       <div className="admin-toolbar">
-        <label className="admin-upload-button"><Plus size={17} /> {uploading ? 'Uploading…' : 'Upload photographs'}
-          <input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploading || saving} onChange={(event) => void uploadPhotos(event)} />
+        <label className="admin-upload-button"><Plus size={17} /> Choose photographs
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={uploading || saving} onChange={choosePhotos} />
         </label>
         <label className="admin-search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search captions" /></label>
       </div>
-      <p className="admin-help">JPG, PNG, and WebP files up to 8 MB. Uploaded images can be used in the homepage editor.</p>
+      <p className="admin-help">JPG, PNG, and WebP files up to 8 MB. Preview your selections before uploading.</p>
+      {pendingFiles.length > 0 && (
+        <section className="admin-upload-preview" aria-label="Selected image previews">
+          <div className="admin-panel-heading">
+            <h2>{uploading ? `Uploading ${uploadedCount} of ${pendingFiles.length}…` : `${pendingFiles.length} image${pendingFiles.length === 1 ? '' : 's'} selected`}</h2>
+            <button type="button" className="admin-secondary-button" disabled={uploading} onClick={() => { setPendingFiles([]); setPendingPreviews([]); }}>Clear selection</button>
+          </div>
+          <div className="admin-image-previews">
+            {pendingPreviews.map((url, index) => <img src={url} alt={`Selected gallery image ${index + 1}`} key={url} />)}
+          </div>
+          <button className="button button-dark" type="button" disabled={uploading} onClick={() => void uploadPhotos()}>
+            {uploading ? 'Uploading…' : 'Upload selected images'}
+          </button>
+        </section>
+      )}
       <div className="admin-gallery-grid">
         {items.filter((item) => item.caption.toLowerCase().includes(search.toLowerCase())).map((item) => (
           <article className="admin-gallery-item" key={item.id}>
             <img src={item.image_url} alt={item.caption} />
-            <label>Caption<input value={item.caption} onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, caption: event.target.value } : entry))} onBlur={(event) => void updateItem(item, { caption: event.target.value })} /></label>
+            <label>Alt text / caption<input value={item.caption} onChange={(event) => onChange(items.map((entry) => entry.id === item.id ? { ...entry, caption: event.target.value } : entry))} onBlur={(event) => void updateItem(item, { caption: event.target.value })} /></label>
             <label className="admin-checkbox"><input type="checkbox" checked={item.is_public} onChange={(event) => void updateItem(item, { is_public: event.target.checked })} /> Show publicly</label>
             <div className="admin-gallery-actions">
+              <label className="admin-gallery-replace" aria-label={`Replace ${item.caption || 'gallery image'}`}>
+                {replacingId === item.id ? 'Replacing…' : 'Replace'}
+                <input type="file" accept="image/jpeg,image/png,image/webp" disabled={Boolean(replacingId) || saving} onChange={(event) => chooseReplacement(item, event)} />
+              </label>
               <button type="button" onClick={() => void moveItem(item, -1)} aria-label="Move image up"><ArrowUp size={15} /></button>
               <button type="button" onClick={() => void moveItem(item, 1)} aria-label="Move image down"><ArrowDown size={15} /></button>
               <button type="button" onClick={() => void onDelete(item)} aria-label="Delete image"><Trash2 size={15} /></button>
@@ -968,168 +880,26 @@ function GalleryEditor({
           </article>
         ))}
         {!items.length && <p className="admin-empty">Upload photographs to start your gallery.</p>}
+        {items.length > 0 && !items.some((item) => item.caption.toLowerCase().includes(search.toLowerCase())) && <p className="admin-empty">No gallery images match this search.</p>}
       </div>
-    </AdminPageFrame>
-  );
-}
-
-function SettingsEditor({
-  title,
-  description,
-  value,
-  fields,
-  saving,
-  onSave,
-}: {
-  title: string;
-  description: string;
-  value: ContentFields;
-  fields: [string, string][];
-  saving: boolean;
-  onSave: (value: ContentFields) => void;
-}) {
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    const content = Object.fromEntries(fields.map(([key]) => [key, String(formData.get(key) ?? '').trim()]));
-    onSave({ content: JSON.stringify(content) });
-  }
-
-  const initialValues = useMemo(() => {
-    try {
-      return JSON.parse(value.content ?? '{}') as Record<string, string>;
-    } catch {
-      return {};
-    }
-  }, [value]);
-
-  return (
-    <SettingsForm title={title} description={description} saving={saving} onSubmit={submit}>
-      {fields.map(([key, label]) => (
-        <label key={key}>{label}
-          {key === 'description' || key === 'footer' || key === 'default_message' || key === 'introduction' || key === 'other_social'
-            ? <textarea name={key} rows={key === 'default_message' ? 4 : 3} defaultValue={initialValues[key] ?? ''} />
-            : <input name={key} type={key.includes('email') ? 'email' : key.includes('instagram') ? 'url' : 'text'} defaultValue={initialValues[key] ?? ''} />}
-          {key === 'widget_enabled' && <small>Enter true to show the floating contact button, or false to hide it.</small>}
-        </label>
-      ))}
-    </SettingsForm>
-  );
-}
-
-function SettingsForm({
-  title,
-  description,
-  saving,
-  onSubmit,
-  children,
-}: {
-  title: string;
-  description: string;
-  saving: boolean;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  children: ReactNode;
-}) {
-  return (
-    <AdminPageFrame>
-      <div className="admin-panel admin-settings-panel">
-        <div className="admin-panel-heading"><h2>{title}</h2><Settings size={19} /></div>
-        <p className="admin-help">{description}</p>
-        <form className="admin-settings-form" onSubmit={onSubmit}>
-          {children}
-          <button className="button button-dark" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
-        </form>
-      </div>
-    </AdminPageFrame>
-  );
-}
-
-function AccountSettings({
-  user,
-  saving,
-  onSaveName,
-  onSavePassword,
-  setSaving,
-  onError,
-  onNotice,
-}: {
-  user: { email: string; name: string } | null;
-  saving: boolean;
-  onSaveName: (name: string) => Promise<void>;
-  onSavePassword: (password: string) => Promise<void>;
-  setSaving: (saving: boolean) => void;
-  onError: (error: unknown, fallback: string) => void;
-  onNotice: (message: string) => void;
-}) {
-  async function saveName(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSaving(true);
-    try {
-      await onSaveName(String(new FormData(event.currentTarget).get('name') ?? ''));
-      onNotice('Account name updated.');
-    } catch (error) {
-      onError(error, 'Account name could not be updated.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function savePassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const values = new FormData(form);
-    const password = String(values.get('password') ?? '');
-    if (password !== String(values.get('confirm_password') ?? '')) {
-      onError(new Error('The passwords do not match.'), 'The password could not be updated.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await onSavePassword(password);
-      form.reset();
-      onNotice('Password updated.');
-    } catch (error) {
-      onError(error, 'Password could not be updated.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function resetPassword() {
-    if (!user?.email) return;
-    setSaving(true);
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(user.email);
-      if (error) throw error;
-      onNotice('If password recovery is enabled, a reset link has been sent to the account email.');
-    } catch (error) {
-      onError(error, 'A password reset email could not be sent.');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <AdminPageFrame>
-      <div className="admin-account-grid">
-        <section className="admin-panel">
-          <h2>Account details</h2>
-          <p><strong>Email</strong><br />{user?.email || 'No email available'}</p>
-          <form className="admin-settings-form" onSubmit={saveName}>
-            <label>Display name<input name="name" minLength={2} maxLength={80} defaultValue={user?.name ?? ''} required /></label>
-            <button className="button button-dark" disabled={saving}>Update name</button>
-          </form>
-        </section>
-        <section className="admin-panel">
-          <h2>Change password</h2>
-          <form className="admin-settings-form" onSubmit={savePassword}>
-            <label>New password<input name="password" type="password" minLength={10} autoComplete="new-password" required /></label>
-            <label>Confirm new password<input name="confirm_password" type="password" minLength={10} autoComplete="new-password" required /></label>
-            <button className="button button-dark" disabled={saving}>Change password</button>
-          </form>
-          <button className="admin-secondary-button" type="button" onClick={() => void resetPassword()} disabled={saving}>Send password reset link</button>
-        </section>
-      </div>
+      {replacement && (
+        <div className="modal-overlay" onMouseDown={() => setReplacement(null)}>
+          <section className="admin-modal" aria-labelledby="gallery-replacement-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head">
+              <div><span className="eyebrow">GALLERY IMAGE</span><h2 id="gallery-replacement-title">Preview replacement</h2></div>
+              <button className="icon-button" type="button" aria-label="Cancel replacement" onClick={() => setReplacement(null)}><X /></button>
+            </div>
+            <img className="admin-replacement-preview" src={replacement.preview} alt="Preview of replacement image" />
+            <p className="admin-help">This replaces the gallery item’s file. Existing products or page content that still use the old image will keep it.</p>
+            <div className="admin-quick-actions">
+              <button className="admin-secondary-button" type="button" onClick={() => setReplacement(null)}>Cancel</button>
+              <button className="button button-dark" type="button" disabled={replacingId === replacement.item.id} onClick={() => void confirmReplacement()}>
+                {replacingId === replacement.item.id ? 'Replacing…' : 'Replace image'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </AdminPageFrame>
   );
 }

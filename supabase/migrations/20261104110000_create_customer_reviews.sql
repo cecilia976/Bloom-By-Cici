@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS public.customer_reviews (
   customer_name text NOT NULL CHECK (char_length(btrim(customer_name)) BETWEEN 2 AND 80),
   rating smallint NOT NULL CHECK (rating BETWEEN 1 AND 5),
   feedback text NOT NULL CHECK (char_length(btrim(feedback)) BETWEEN 10 AND 1000),
+  is_approved boolean NOT NULL DEFAULT false,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -13,11 +14,14 @@ GRANT SELECT ON public.customer_reviews TO anon, authenticated;
 GRANT INSERT (customer_name, rating, feedback) ON public.customer_reviews TO anon, authenticated;
 GRANT DELETE ON public.customer_reviews TO authenticated;
 
-CREATE POLICY "public_read_customer_reviews"
+CREATE POLICY "public_read_approved_customer_reviews"
   ON public.customer_reviews
   FOR SELECT
   TO anon, authenticated
-  USING (true);
+  USING (
+    is_approved = true
+    OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
+  );
 
 CREATE POLICY "public_submit_customer_reviews"
   ON public.customer_reviews
@@ -27,20 +31,21 @@ CREATE POLICY "public_submit_customer_reviews"
     char_length(btrim(customer_name)) BETWEEN 2 AND 80
     AND rating BETWEEN 1 AND 5
     AND char_length(btrim(feedback)) BETWEEN 10 AND 1000
+    AND is_approved = false
   );
 
-CREATE POLICY "staff_delete_customer_reviews"
+CREATE POLICY "admin_moderate_customer_reviews"
+  ON public.customer_reviews
+  FOR UPDATE
+  TO authenticated
+  USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin')
+  WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
+
+CREATE POLICY "admin_delete_customer_reviews"
   ON public.customer_reviews
   FOR DELETE
   TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1
-      FROM public.staff_profiles
-      WHERE user_id = auth.uid()
-        AND role = 'admin'
-    )
-  );
+  USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 CREATE INDEX customer_reviews_created_at_idx
   ON public.customer_reviews (created_at DESC);

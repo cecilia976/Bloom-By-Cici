@@ -34,42 +34,22 @@ CREATE POLICY "public_read_site_content"
   ON public.site_content FOR SELECT TO anon, authenticated
   USING (true);
 
-CREATE POLICY "staff_manage_site_content"
+CREATE POLICY "admin_manage_site_content"
   ON public.site_content FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
-  );
+  USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin')
+  WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 CREATE POLICY "public_read_gallery"
   ON public.gallery_items FOR SELECT TO anon, authenticated
   USING (is_public = true OR EXISTS (
-    SELECT 1 FROM public.staff_profiles
-    WHERE user_id = auth.uid() AND role = 'admin'
+    SELECT 1
+    WHERE (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   ));
 
-CREATE POLICY "staff_manage_gallery"
+CREATE POLICY "admin_manage_gallery"
   ON public.gallery_items FOR ALL TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
-  )
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
-  );
+  USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin')
+  WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 CREATE INDEX IF NOT EXISTS gallery_items_display_order_idx
   ON public.gallery_items (display_order, created_at DESC);
@@ -87,41 +67,32 @@ CREATE POLICY "public_read_bloom_assets"
   USING (bucket_id = 'bloom-assets');
 
 DROP POLICY IF EXISTS "staff_upload_bloom_assets" ON storage.objects;
-CREATE POLICY "staff_upload_bloom_assets"
+DROP POLICY IF EXISTS "admin_upload_bloom_assets" ON storage.objects;
+CREATE POLICY "admin_upload_bloom_assets"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (
     bucket_id = 'bloom-assets'
-    AND EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   );
 
 DROP POLICY IF EXISTS "staff_update_bloom_assets" ON storage.objects;
-CREATE POLICY "staff_update_bloom_assets"
+DROP POLICY IF EXISTS "admin_update_bloom_assets" ON storage.objects;
+CREATE POLICY "admin_update_bloom_assets"
   ON storage.objects FOR UPDATE TO authenticated
   USING (
     bucket_id = 'bloom-assets'
-    AND EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   )
   WITH CHECK (
     bucket_id = 'bloom-assets'
-    AND EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   );
 
 DROP POLICY IF EXISTS "staff_delete_bloom_assets" ON storage.objects;
-CREATE POLICY "staff_delete_bloom_assets"
+DROP POLICY IF EXISTS "admin_delete_bloom_assets" ON storage.objects;
+CREATE POLICY "admin_delete_bloom_assets"
   ON storage.objects FOR DELETE TO authenticated
   USING (
     bucket_id = 'bloom-assets'
-    AND EXISTS (
-      SELECT 1 FROM public.staff_profiles
-      WHERE user_id = auth.uid() AND role = 'admin'
-    )
+    AND (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin'
   );
