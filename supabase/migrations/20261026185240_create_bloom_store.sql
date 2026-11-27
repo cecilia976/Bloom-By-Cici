@@ -4,16 +4,15 @@
 1. New tables
 - `products`: public catalog records with title, category, price, description, image URLs, stock status, occasion tags, and size variants.
 - `inquiries`: customer custom-order requests, including contact details, event date, budget, description, optional reference images, and workflow status.
-- `staff_profiles`: an allowlist connecting Supabase Auth user IDs to the staff role.
 
 2. Security
 - Products are publicly readable so the storefront works before sign-in.
-- Product writes are restricted to authenticated users listed as staff.
-- Inquiries can be submitted publicly, but only staff can read or update the inbox.
+- Product writes and private inquiry access are restricted to the authorized administrator.
+- Administrator authorization uses the trusted Supabase Auth `app_metadata.role` claim.
 - Row-level security is enabled on every table and grants are limited to the operations used by the app.
 
 3. Important notes
-- Create the requested staff account in Supabase Auth, then add its user ID to `staff_profiles` with role `admin`.
+- Set `app_metadata.role` to `admin` for the administrator account through a trusted Supabase administrative channel.
 - Product image URLs are stored as text so the initial catalog can use replaceable hosted photography.
 */
 
@@ -45,40 +44,34 @@ CREATE TABLE IF NOT EXISTS public.inquiries (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS public.staff_profiles (
-  user_id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  role text NOT NULL DEFAULT 'admin' CHECK (role = 'admin'),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.inquiries ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.staff_profiles ENABLE ROW LEVEL SECURITY;
 
 GRANT SELECT ON public.products TO anon, authenticated;
 GRANT INSERT, UPDATE, DELETE ON public.products TO authenticated;
 GRANT INSERT ON public.inquiries TO anon, authenticated;
 GRANT SELECT, UPDATE ON public.inquiries TO authenticated;
-GRANT SELECT ON public.staff_profiles TO authenticated;
 
 DROP POLICY IF EXISTS "public_read_active_products" ON public.products;
-CREATE POLICY "public_read_active_products" ON public.products FOR SELECT TO anon, authenticated USING (active = true OR EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
+CREATE POLICY "public_read_active_products" ON public.products FOR SELECT TO anon, authenticated USING (active = true OR (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 DROP POLICY IF EXISTS "staff_insert_products" ON public.products;
-CREATE POLICY "staff_insert_products" ON public.products FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "admin_insert_products" ON public.products;
+CREATE POLICY "admin_insert_products" ON public.products FOR INSERT TO authenticated WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 DROP POLICY IF EXISTS "staff_update_products" ON public.products;
-CREATE POLICY "staff_update_products" ON public.products FOR UPDATE TO authenticated USING (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin')) WITH CHECK (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "admin_update_products" ON public.products;
+CREATE POLICY "admin_update_products" ON public.products FOR UPDATE TO authenticated USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin') WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 DROP POLICY IF EXISTS "staff_delete_products" ON public.products;
-CREATE POLICY "staff_delete_products" ON public.products FOR DELETE TO authenticated USING (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "admin_delete_products" ON public.products;
+CREATE POLICY "admin_delete_products" ON public.products FOR DELETE TO authenticated USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 DROP POLICY IF EXISTS "public_submit_inquiries" ON public.inquiries;
 CREATE POLICY "public_submit_inquiries" ON public.inquiries FOR INSERT TO anon, authenticated WITH CHECK (status = 'New');
 DROP POLICY IF EXISTS "staff_read_inquiries" ON public.inquiries;
-CREATE POLICY "staff_read_inquiries" ON public.inquiries FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
+DROP POLICY IF EXISTS "admin_read_inquiries" ON public.inquiries;
+CREATE POLICY "admin_read_inquiries" ON public.inquiries FOR SELECT TO authenticated USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 DROP POLICY IF EXISTS "staff_update_inquiries" ON public.inquiries;
-CREATE POLICY "staff_update_inquiries" ON public.inquiries FOR UPDATE TO authenticated USING (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin')) WITH CHECK (EXISTS (SELECT 1 FROM public.staff_profiles WHERE user_id = auth.uid() AND role = 'admin'));
-
-DROP POLICY IF EXISTS "staff_read_profile" ON public.staff_profiles;
-CREATE POLICY "staff_read_profile" ON public.staff_profiles FOR SELECT TO authenticated USING (user_id = auth.uid());
+DROP POLICY IF EXISTS "admin_update_inquiries" ON public.inquiries;
+CREATE POLICY "admin_update_inquiries" ON public.inquiries FOR UPDATE TO authenticated USING ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin') WITH CHECK ((auth.jwt() -> 'app_metadata' ->> 'role') = 'admin');
 
 INSERT INTO public.products (title, category, price, description, images, stock_status, stock_count, occasions, sizes, featured)
 SELECT * FROM (VALUES
