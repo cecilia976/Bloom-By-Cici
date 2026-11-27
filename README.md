@@ -1,6 +1,6 @@
 # Bloom By Cici
 
-A full-stack handmade floral storefront for bouquets, arrangements, mirror décor, custom requests, and a protected administrator portal.
+A full-stack handmade floral storefront for bouquets, arrangements, mirror décor, and custom requests, with a protected staff studio for administrators.
 
 ## Supabase setup
 
